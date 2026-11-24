@@ -1,59 +1,59 @@
-# Release guide — v1.0.0
+# Release guide — v1.0.1
 
 Repository: `ITMOSOFT/laravel-marketing-automation`
 
 Composer package: `itmosoft/laravel-marketing-automation`
 
-## Repository description
+## Suggested repository description
 
 Event-triggered marketing workflows, execution tracking, and pluggable action handlers for Laravel applications.
 
 ## User-run Git commands
 
-Run locally from the extracted package directory. Review staged files before committing.
+Apply and review the replacement files locally. Do not run these until local tests pass and the changes are committed and pushed by the repository owner.
 
 ```bash
-git init
-git branch -M main
-git add .
+composer validate --strict
+composer install
+composer test
 git status
-git commit -m "chore: initial Laravel marketing automation package"
-git remote add origin https://github.com/ITMOSOFT/laravel-marketing-automation.git
-git push -u origin main
 ```
 
-After local tests and GitHub Actions pass:
+After the changes are committed and pushed to `main`, and GitHub Actions passes:
 
 ```bash
-git tag -a v1.0.0 -m "Release v1.0.0"
-git push origin v1.0.0
+git fetch origin --tags
+git checkout main
+git pull origin main
+git tag -a v1.0.1 -m "Release v1.0.1"
+git push origin v1.0.1
 ```
 
 ## GitHub Release
 
-Title: `v1.0.0 - Initial Release`
+Title: `v1.0.1 - Workflow Execution Reliability and Validation`
 
 Description:
 
-Initial release of ITMOSOFT Laravel Marketing Automation.
+- Made execution transitions transactional and row-locked to prevent stale workers from overwriting completed or failed states.
+- Protected workflow activation and pause transitions against stale model instances.
+- Added validation for workflow names, event names, step definitions, JSON-serializable settings and context, and context-size limits.
+- Removed the undeclared mbstring runtime dependency from failure handling.
+- Validated configured table identifiers.
+- Expanded tests for lifecycle transitions, stale execution states, invalid definitions, and context validation.
 
-- Define event-triggered workflows with validated action steps.
-- Activate and pause workflows.
-- Match application events to active workflows.
-- Persist queued workflow execution records and JSON context.
-- Track queued, running, completed, and failed execution states.
-- Pluggable action handler contract.
-- Configurable database tables, models, step limits, and context size.
-- Laravel 12/13 and PHP 8.3+ support.
+Compatibility:
+- PHP 8.3+
+- Laravel 12 and 13
 
-Queue workers, action execution, delay/branch evaluation, and provider integrations remain application responsibilities in this release.
+Validation:
+- Run the complete local PHPUnit suite.
+- Confirm the GitHub Actions PHP/Laravel matrix is green before tagging.
 
 ## Packagist
 
-1. Open https://packagist.org/packages/submit
-2. Submit `https://github.com/ITMOSOFT/laravel-marketing-automation`
-3. Configure the Packagist GitHub webhook if prompted.
-4. Confirm Packagist detects tag `v1.0.0`.
-5. Verify installation with `composer require itmosoft/laravel-marketing-automation`.
+After publishing the GitHub release, confirm Packagist detects `v1.0.1` and verify installation with:
 
-Do not publish until local tests and the GitHub Actions matrix pass.
+```bash
+composer require itmosoft/laravel-marketing-automation:^1.0
+```

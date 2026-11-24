@@ -43,11 +43,11 @@ The `trigger()` method persists queued execution records for active workflows ma
 
 ## Lifecycle
 
-Workflow: `draft` → `active` ↔ `paused` → `archived` (archive can be applied by the consuming application in this release).
+Workflow: `draft` → `active` ↔ `paused` → `archived` (archiving is not implemented by this release).
 
 Execution: `queued` → `running` → `completed` or `failed`.
 
-The manager provides state transitions and execution persistence. It does not run an autonomous worker or evaluate arbitrary user-provided code.
+State transitions are performed against freshly loaded, row-locked records inside database transactions. This prevents stale model instances from overwriting a later execution state. Database engines with effective row-level locking should be used for concurrent production workers.
 
 ## Action handlers
 
@@ -55,14 +55,14 @@ Implement `ItmoSoft\MarketingAutomation\Contracts\WorkflowActionHandler` for eac
 
 ## Configuration
 
-`config/marketing-automation.php` supports table prefixes, table names, model class overrides, maximum step count, and maximum serialized context size.
+`config/marketing-automation.php` supports table prefixes, table names, model class overrides, maximum step count, and maximum serialized context size. Configured table identifiers are validated before use.
 
 ## Security and operational notes
 
 - Authorize workflow creation, editing, activation, and execution in your application.
 - Never evaluate PHP or execute arbitrary code from workflow definitions.
 - Use allowlisted action handlers and validate each handler's configuration.
-- Add queue dispatch, retries, locking, deduplication/idempotency keys, and stale-execution recovery in the host application before production use.
+- Add queue dispatch, retries, idempotency keys, and stale-execution recovery in the host application before production use.
 - Tenant isolation is not automatic; scope workflows and executions in your application.
 - Avoid storing secrets or unnecessary personal data in execution context.
 - This package does not directly integrate with email campaigns, notifications, CRM leads, or external providers.

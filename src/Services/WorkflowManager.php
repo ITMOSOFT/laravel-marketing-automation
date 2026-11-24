@@ -2,6 +2,7 @@
 
 namespace ItmoSoft\MarketingAutomation\Services;
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use ItmoSoft\MarketingAutomation\Enums\ExecutionStatus;
 use ItmoSoft\MarketingAutomation\Enums\WorkflowStatus;
@@ -14,7 +15,19 @@ class WorkflowManager
 {
     public function create(string $name, string $triggerEvent, array $steps, array $settings = []): Workflow
     {
-        $this->validateDefinition($triggerEvent, $steps);
+        $name = trim($name);
+        $triggerEvent = trim($triggerEvent);
+
+        if ($name === '') {
+            throw new InvalidWorkflowDefinitionException('A workflow name is required.');
+        }
+
+        if ($triggerEvent === '' || strlen($triggerEvent) > 150) {
+            throw new InvalidWorkflowDefinitionException('A trigger event between 1 and 150 characters is required.');
+        }
+
+        $this->validateDefinition($steps);
+        $this->assertJsonSerializable($settings, 'Workflow settings');
 
         return $this->workflowModel()::query()->create([
             'name' => $name,
@@ -27,46 +40,68 @@ class WorkflowManager
 
     public function activate(Workflow $workflow): Workflow
     {
-        if (! is_array($workflow->steps) || $workflow->steps === []) {
-            throw new InvalidWorkflowDefinitionException('A workflow must contain at least one step before activation.');
-        }
+        return DB::transaction(function () use ($workflow): Workflow {
+            $fresh = $this->lockWorkflow($workflow);
 
-        $workflow->activate();
+            if (! in_array($fresh->status, [WorkflowStatus::Draft, WorkflowStatus::Paused], true)) {
+                throw new InvalidWorkflowDefinitionException('Only draft or paused workflows can be activated.');
+            }
 
-        return $workflow->refresh();
+            if (! is_array($fresh->steps) || $fresh->steps === []) {
+                throw new InvalidWorkflowDefinitionException('A workflow must contain at least one step before activation.');
+            }
+
+            $fresh->forceFill(['status' => WorkflowStatus::Active])->save();
+
+            return $fresh->refresh();
+        });
     }
 
     public function pause(Workflow $workflow): Workflow
     {
-        $workflow->pause();
+        return DB::transaction(function () use ($workflow): Workflow {
+            $fresh = $this->lockWorkflow($workflow);
 
-        return $workflow->refresh();
+            if ($fresh->status !== WorkflowStatus::Active) {
+                throw new InvalidWorkflowDefinitionException('Only active workflows can be paused.');
+            }
+
+            $fresh->forceFill(['status' => WorkflowStatus::Paused])->save();
+
+            return $fresh->refresh();
+        });
     }
 
     /**
-     * Record queued executions for active workflows matching an event.
+     * Persist queued execution records for active workflows matching an event.
      * Dispatching jobs is intentionally left to the host application's queue integration.
+     *
+     * @return array<int, WorkflowExecution>
      */
     public function trigger(string $event, array $context = []): array
     {
+        $event = trim($event);
+        if ($event === '' || strlen($event) > 150) {
+            throw new InvalidWorkflowDefinitionException('A trigger event between 1 and 150 characters is required.');
+        }
+
+        $this->assertJsonSerializable($context, 'Workflow context');
+        $encoded = json_encode($context, JSON_THROW_ON_ERROR);
         $maxBytes = (int) config('itmosoft-marketing-automation.max_context_bytes', 65535);
-        try {
-            $encoded = json_encode($context, JSON_THROW_ON_ERROR);
-        } catch (JsonException $exception) {
-            throw new InvalidWorkflowDefinitionException('Workflow context must be JSON serializable.', previous: $exception);
+
+        if ($maxBytes < 1 || strlen($encoded) > $maxBytes) {
+            throw new InvalidWorkflowDefinitionException('Workflow context exceeds the configured byte limit.');
         }
 
-        if (strlen($encoded) > $maxBytes) {
-            throw new InvalidWorkflowDefinitionException("Workflow context exceeds the configured {$maxBytes}-byte limit.");
-        }
+        return DB::transaction(function () use ($event, $context): array {
+            $workflows = $this->workflowModel()::query()
+                ->where('trigger_event', $event)
+                ->where('status', WorkflowStatus::Active->value)
+                ->lockForUpdate()
+                ->get();
 
-        $workflows = $this->workflowModel()::query()
-            ->where('trigger_event', $event)
-            ->where('status', WorkflowStatus::Active->value)
-            ->get();
-
-        return DB::transaction(function () use ($workflows, $context): array {
             $executions = [];
+
             foreach ($workflows as $workflow) {
                 $executions[] = $this->executionModel()::query()->create([
                     'workflow_id' => $workflow->getKey(),
@@ -82,65 +117,105 @@ class WorkflowManager
 
     public function markRunning(WorkflowExecution $execution): WorkflowExecution
     {
-        if ($execution->status !== ExecutionStatus::Queued) {
-            throw new InvalidWorkflowDefinitionException('Only queued executions can start.');
-        }
-
-        $execution->forceFill([
-            'status' => ExecutionStatus::Running,
-            'started_at' => now(),
-        ])->save();
-
-        return $execution->refresh();
+        return $this->transitionExecution(
+            $execution,
+            [ExecutionStatus::Queued],
+            [
+                'status' => ExecutionStatus::Running,
+                'started_at' => now(),
+                'finished_at' => null,
+                'error' => null,
+            ]
+        );
     }
 
     public function markCompleted(WorkflowExecution $execution): WorkflowExecution
     {
-        if ($execution->status !== ExecutionStatus::Running) {
-            throw new InvalidWorkflowDefinitionException('Only running executions can complete.');
-        }
-
-        $execution->forceFill([
-            'status' => ExecutionStatus::Completed,
-            'finished_at' => now(),
-        ])->save();
-
-        return $execution->refresh();
+        return $this->transitionExecution(
+            $execution,
+            [ExecutionStatus::Running],
+            [
+                'status' => ExecutionStatus::Completed,
+                'finished_at' => now(),
+                'error' => null,
+            ]
+        );
     }
 
     public function markFailed(WorkflowExecution $execution, string $error): WorkflowExecution
     {
-        if (! in_array($execution->status, [ExecutionStatus::Queued, ExecutionStatus::Running], true)) {
-            throw new InvalidWorkflowDefinitionException('Only queued or running executions can fail.');
-        }
-
-        $execution->forceFill([
-            'status' => ExecutionStatus::Failed,
-            'error' => mb_substr($error, 0, 2000),
-            'finished_at' => now(),
-        ])->save();
-
-        return $execution->refresh();
+        return $this->transitionExecution(
+            $execution,
+            [ExecutionStatus::Queued, ExecutionStatus::Running],
+            [
+                'status' => ExecutionStatus::Failed,
+                'error' => substr($error, 0, 2000),
+                'finished_at' => now(),
+            ]
+        );
     }
 
-    protected function validateDefinition(string $triggerEvent, array $steps): void
-    {
-        if (trim($triggerEvent) === '') {
-            throw new InvalidWorkflowDefinitionException('A trigger event is required.');
-        }
+    /**
+     * @param array<int, ExecutionStatus> $allowed
+     * @param array<string, mixed> $attributes
+     */
+    protected function transitionExecution(
+        WorkflowExecution $execution,
+        array $allowed,
+        array $attributes
+    ): WorkflowExecution {
+        return DB::transaction(function () use ($execution, $allowed, $attributes): WorkflowExecution {
+            $modelClass = $this->executionModel();
+            /** @var WorkflowExecution $fresh */
+            $fresh = $modelClass::query()->lockForUpdate()->findOrFail($execution->getKey());
 
+            if (! in_array($fresh->status, $allowed, true)) {
+                throw new InvalidWorkflowDefinitionException('The execution is not in a state that permits this transition.');
+            }
+
+            $fresh->forceFill($attributes)->save();
+
+            return $fresh->refresh();
+        });
+    }
+
+    protected function lockWorkflow(Workflow $workflow): Workflow
+    {
+        $modelClass = $this->workflowModel();
+
+        /** @var Workflow $fresh */
+        $fresh = $modelClass::query()->lockForUpdate()->findOrFail($workflow->getKey());
+
+        return $fresh;
+    }
+
+    protected function validateDefinition(array $steps): void
+    {
         $max = (int) config('itmosoft-marketing-automation.max_steps', 50);
-        if ($steps === [] || count($steps) > $max) {
+
+        if ($max < 1 || $steps === [] || count($steps) > $max) {
             throw new InvalidWorkflowDefinitionException("A workflow must contain between 1 and {$max} steps.");
         }
 
-        foreach ($steps as $index => $step) {
+        foreach (array_values($steps) as $index => $step) {
             if (! is_array($step) || ! isset($step['action']) || ! is_string($step['action']) || trim($step['action']) === '') {
                 throw new InvalidWorkflowDefinitionException("Workflow step {$index} must define a non-empty action name.");
             }
+
             if (isset($step['config']) && ! is_array($step['config'])) {
                 throw new InvalidWorkflowDefinitionException("Workflow step {$index} config must be an array.");
             }
+
+            $this->assertJsonSerializable($step, "Workflow step {$index}");
+        }
+    }
+
+    protected function assertJsonSerializable(array $value, string $label): void
+    {
+        try {
+            json_encode($value, JSON_THROW_ON_ERROR);
+        } catch (JsonException $exception) {
+            throw new InvalidWorkflowDefinitionException("{$label} must be JSON serializable.", previous: $exception);
         }
     }
 

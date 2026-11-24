@@ -3,14 +3,27 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use ItmoSoft\MarketingAutomation\Exceptions\InvalidWorkflowDefinitionException;
 
 return new class extends Migration
 {
+    protected function tableName(string $key, string $fallback): string
+    {
+        $prefix = (string) config('itmosoft-marketing-automation.table_prefix', 'marketing_automation_');
+        $table = (string) config("itmosoft-marketing-automation.tables.{$key}", $fallback);
+        $name = $prefix.$table;
+
+        if (! preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $name)) {
+            throw new InvalidWorkflowDefinitionException('Configured table names may contain only letters, numbers, and underscores, and must start with a letter.');
+        }
+
+        return $name;
+    }
+
     public function up(): void
     {
-        $prefix = config('itmosoft-marketing-automation.table_prefix', 'marketing_automation_');
-        $workflows = $prefix.config('itmosoft-marketing-automation.tables.workflows', 'workflows');
-        $executions = $prefix.config('itmosoft-marketing-automation.tables.executions', 'executions');
+        $workflows = $this->tableName('workflows', 'workflows');
+        $executions = $this->tableName('executions', 'executions');
 
         Schema::create($workflows, function (Blueprint $table): void {
             $table->id();
@@ -38,8 +51,7 @@ return new class extends Migration
 
     public function down(): void
     {
-        $prefix = config('itmosoft-marketing-automation.table_prefix', 'marketing_automation_');
-        Schema::dropIfExists($prefix.config('itmosoft-marketing-automation.tables.executions', 'executions'));
-        Schema::dropIfExists($prefix.config('itmosoft-marketing-automation.tables.workflows', 'workflows'));
+        Schema::dropIfExists($this->tableName('executions', 'executions'));
+        Schema::dropIfExists($this->tableName('workflows', 'workflows'));
     }
 };

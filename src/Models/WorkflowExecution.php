@@ -13,7 +13,10 @@ class WorkflowExecution extends Model
 
     protected $guarded = [];
 
-    protected function tableConfigKey(): string { return 'executions'; }
+    protected function tableConfigKey(): string
+    {
+        return 'executions';
+    }
 
     protected function casts(): array
     {
@@ -27,6 +30,9 @@ class WorkflowExecution extends Model
 
     public function workflow(): BelongsTo
     {
-        return $this->belongsTo(config('itmosoft-marketing-automation.models.workflow'), 'workflow_id');
+        return $this->belongsTo(
+            config('itmosoft-marketing-automation.models.workflow', Workflow::class),
+            'workflow_id'
+        );
     }
 }

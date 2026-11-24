@@ -13,10 +13,26 @@
     "orchestra/testbench": "^10.0 || ^11.0",
     "phpunit/phpunit": "^11.5 || ^12.0"
   },
-  "autoload": {"psr-4": {"ItmoSoft\\MarketingAutomation\\": "src/"}},
-  "autoload-dev": {"psr-4": {"ItmoSoft\\MarketingAutomation\\Tests\\": "tests/"}},
-  "extra": {"laravel": {"providers": ["ItmoSoft\\MarketingAutomation\\MarketingAutomationServiceProvider"]}},
-  "scripts": {"test": "phpunit"},
+  "autoload": {
+    "psr-4": {
+      "ItmoSoft\\MarketingAutomation\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "ItmoSoft\\MarketingAutomation\\Tests\\": "tests/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "ItmoSoft\\MarketingAutomation\\MarketingAutomationServiceProvider"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "phpunit"
+  },
   "minimum-stability": "stable",
   "prefer-stable": true
 }

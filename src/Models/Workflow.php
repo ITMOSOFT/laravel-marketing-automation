@@ -13,25 +13,25 @@ class Workflow extends Model
 
     protected $guarded = [];
 
-    protected function tableConfigKey(): string { return 'workflows'; }
+    protected function tableConfigKey(): string
+    {
+        return 'workflows';
+    }
 
     protected function casts(): array
     {
-        return ['status' => WorkflowStatus::class, 'steps' => 'array', 'settings' => 'array'];
+        return [
+            'status' => WorkflowStatus::class,
+            'steps' => 'array',
+            'settings' => 'array',
+        ];
     }
 
     public function executions(): HasMany
     {
-        return $this->hasMany(config('itmosoft-marketing-automation.models.execution'), 'workflow_id');
-    }
-
-    public function activate(): void
-    {
-        $this->forceFill(['status' => WorkflowStatus::Active])->save();
-    }
-
-    public function pause(): void
-    {
-        $this->forceFill(['status' => WorkflowStatus::Paused])->save();
+        return $this->hasMany(
+            config('itmosoft-marketing-automation.models.execution', WorkflowExecution::class),
+            'workflow_id'
+        );
     }
 }
